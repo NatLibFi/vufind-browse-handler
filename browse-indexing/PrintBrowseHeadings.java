@@ -31,6 +31,7 @@ public class PrintBrowseHeadings
     private String luceneField;
 
     private String KEY_SEPARATOR = "\1";
+    private String FILTER_SEPARATOR = "\2";
     private String RECORD_SEPARATOR = "\r\n";
 
     private void loadHeadings (Leech leech,
@@ -40,19 +41,32 @@ public class PrintBrowseHeadings
     {
         BrowseEntry h;
         while ((h = leech.next ()) != null) {
-            byte[] sort_key = h.key;
-            String heading = h.value;
-
             if (predicate != null &&
-                !predicate.isSatisfiedBy (heading)) {
+                !predicate.isSatisfiedBy (h.value)) {
                 continue;
             }
 
-            if (sort_key != null) {
-                out.print (new String (Base64.encodeBase64 (sort_key)) +
-                           KEY_SEPARATOR +
-                           heading +
-                           RECORD_SEPARATOR);
+            if (h.key != null) {
+                String heading = new String (Base64.encodeBase64 (h.key)) +
+                    KEY_SEPARATOR +
+                    h.value.replace("\r", "").replace("\n", "");
+                  
+                if (h.filters != null) {
+                    String filters = "";
+                    for (String filter: h.filters.keySet ()) {
+                        String[] values = h.filters.get (filter);
+                        for (String value: values) {
+                            if (!filters.isEmpty()) {
+                                filters += FILTER_SEPARATOR;
+                            }
+                            filters += filter + ":" + value.replace("\r", "").replace("\n", "");
+                        }
+                    }
+                    heading += KEY_SEPARATOR + filters;
+                }
+                heading += RECORD_SEPARATOR;
+                  
+                out.print (heading);
             }
         }
     }

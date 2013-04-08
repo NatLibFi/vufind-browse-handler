@@ -15,8 +15,9 @@ public class StoredFieldLeech extends Leech
     int currentDoc = 0;
     LinkedList<BrowseEntry> buffer;
 
-    String sortField;
-    String valueField;
+    String[] sortFields;
+    String[] valueFields;
+    String[] filterFields;
 
     private Set<String> fieldSelection;
 
@@ -25,18 +26,26 @@ public class StoredFieldLeech extends Leech
     {
         super (indexPath, field);
 
-        sortField = Utils.getEnvironment ("SORTFIELD");
-        valueField = Utils.getEnvironment ("VALUEFIELD");
+        sortFields = Utils.getEnvironment ("SORTFIELD").split(":");
+        valueFields = Utils.getEnvironment ("VALUEFIELD").split(":");
+        filterFields = Utils.getEnvironment ("FILTERFIELD").split(":");
 
-        if (sortField == null || valueField == null) {
+        if (sortFields.length == 0 || valueFields.length == 0) {
             throw new IllegalArgumentException ("Both SORTFIELD and " +
                                                 "VALUEFIELD environment " +
                                                 "variables must be set.");
         }
 
         fieldSelection = new HashSet<String>();
-        fieldSelection.add(sortField);
-        fieldSelection.add(valueField);
+        for (String fld: sortFields) {
+            fieldSelection.add (fld);
+        }
+        for (String fld: valueFields) {
+            fieldSelection.add (fld);
+        }
+        for (String fld: filterFields) {
+            fieldSelection.add (fld);
+        }
 
         reader = DirectoryReader.open (FSDirectory.open (new File (indexPath)));
         buffer = new LinkedList<BrowseEntry> ();
@@ -48,13 +57,26 @@ public class StoredFieldLeech extends Leech
     {
         Document doc = reader.document (currentDoc, fieldSelection);
 
-        String[] sort_key = doc.getValues (sortField);
-        String[] value = doc.getValues (valueField);
+        List<String> sort_keys = new LinkedList<String> ();
+        for (String fld: sortFields) {
+            for (String value: doc.getValues (fld)) {
+                sort_keys.add (value);
+            }
+        }
+        List<String> values = new LinkedList<String> ();
+        for (String fld: valueFields) {
+            for (String value: doc.getValues (fld)) {
+                values.add (value);
+            }
+        }
+        Map<String, String[]> filterMap = new HashMap<String, String[]> ();
+        for (String fld: filterFields) {
+            filterMap.put (fld, doc.getValues (fld));
+        }
 
-        if (sort_key.length == value.length) {
-            for (int i = 0; i < value.length; i++) {
-                buffer.add (new BrowseEntry(buildSortKey(sort_key[i]),
-                                            value[i]));
+        if (sort_keys.size() == values.size()) {
+            for (int i = 0; i < values.size(); i++) {
+                buffer.add (new BrowseEntry(buildSortKey(sort_keys.get(i)), values.get(i), filterMap));
             }
         } else {
             System.err.println("Skipped entries for docid " + docid +

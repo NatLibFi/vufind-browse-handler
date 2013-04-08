@@ -6,6 +6,7 @@ import java.util.*;
 
 import au.gov.nla.util.Normaliser;
 import au.gov.nla.util.BrowseEntry;
+import au.gov.nla.util.Utils;
 
 
 public class Leech
@@ -63,21 +64,21 @@ public class Leech
             AtomicReader ir = new SlowCompositeReaderWrapper(reader);
             Terms terms = ir.terms(this.field);
             if (terms == null) {
-            	  return null;
+                  return null;
             }
             tenum = terms.iterator(null);
-        }
+            }
 
         if (tenum.next() != null) {
             String termText = tenum.term().utf8ToString();
 
             if (termExists(termText)) {
-                return new BrowseEntry (buildSortKey (termText), termText) ;
+                return new BrowseEntry (buildSortKey (termText), termText, null);
             } else {
                 return this.next();
             }
         } else {
-            return null;
+          return null;
         }
     }
 }
