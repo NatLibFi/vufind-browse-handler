@@ -40,6 +40,7 @@ public class PrintBrowseHeadings
         throws Exception
     {
         BrowseEntry h;
+        int count = 0;
         while ((h = leech.next ()) != null) {
             if (predicate != null &&
                 !predicate.isSatisfiedBy (h.value)) {
@@ -67,8 +68,13 @@ public class PrintBrowseHeadings
                 heading += RECORD_SEPARATOR;
                   
                 out.print (heading);
+
+                if (++count % 500000 == 0) { 
+                    System.out.println(new Integer(count).toString() + " headings loaded");
+                }
             }
         }
+        System.out.println(new Integer(count).toString() + " headings loaded");
     }
 
 

@@ -78,11 +78,11 @@ public class CreateBrowseSQLite
                 "insert or ignore into filter_link (heading_id, filter_value_id) values (?, ?)");
 
         HashMap<String, Integer> filterTypeMap = new HashMap<String, Integer>();
-        HashMap<String, Integer> filterValueCache = new LinkedHashMap<String, Integer>(1000, .75F, true) {
+        HashMap<String, Integer> filterValueCache = new LinkedHashMap<String, Integer>(10000, .75F, true) {
             protected static final long serialVersionUID = 1L;
             @Override
             protected boolean removeEldestEntry(Map.Entry eldest) {
-                return size() >= 1000;
+                return size() >= 10000;
             }
         };
         String line;
@@ -144,10 +144,8 @@ public class CreateBrowseSQLite
                             prepAddFilterLink.addBatch ();
 
                             if ((++linkCount % 500000) == 0) {
-                                System.out.print("  Executing link batch...");
                                 prepAddFilterLink.executeBatch ();
                                 prepAddFilterLink.clearBatch ();
-                                System.out.println(" done");
                             }
                         } else {
                               System.err.println ("Invalid filter string: '" + filter + "'");
@@ -156,18 +154,21 @@ public class CreateBrowseSQLite
                 }
             }
 
+            count++;
+
             if ((count % 500000) == 0) {
                 prepAddHeading.executeBatch ();
                 prepAddHeading.clearBatch ();
+                System.out.println(new Integer(count) + " headings loaded");
             }
-            
-            count++;
         }
 
         prepAddHeading.executeBatch ();
         prepAddHeading.close ();
         prepAddFilterLink.executeBatch ();
         prepAddFilterLink.close ();
+        
+        System.out.println("  " + new Integer(count) + " headings loaded");
         
         // Build filter_type table
         System.out.println("Building filter type table...");
@@ -281,8 +282,8 @@ public class CreateBrowseSQLite
         createKeyIndex ();
         buildOrderedTables ();
         dropAllHeadingsTable ();
+        compactDatabase ();
         createFilterIndexes ();
-        compactDatabase();
     }
 
 
