@@ -168,7 +168,7 @@ public class CreateBrowseSQLite
         prepAddFilterLink.executeBatch ();
         prepAddFilterLink.close ();
         
-        System.out.println("  " + new Integer(count) + " headings loaded");
+        System.out.println(new Integer(count) + " headings loaded");
         
         // Build filter_type table
         System.out.println("Building filter type table...");
