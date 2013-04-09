@@ -261,13 +261,12 @@ class HeadingsDB
         int rowidResult;
         String[] tmp_build;
         String delimiter = ":";
-        String sql_statement =  "select rowid from headings where key < ?";
+        String sql_statement =  "select max(rowid) as id from headings where key < ?";
 
         Pair<String, List<String>> filterList = filterQueryToSQL(filters);
         if (filterList != null) {
             sql_statement += " and (" + filterList.fst + ")";
         } 
-        sql_statement += " order by key desc limit 1";
 
         PreparedStatement rowStmnt = db.prepareStatement (sql_statement);
 
@@ -283,7 +282,7 @@ class HeadingsDB
         ResultSet rs = rowStmnt.executeQuery ();
 
         if (rs.next ()) {
-            rowidResult = rs.getInt ("rowid");
+            rowidResult = rs.getInt ("id");
         } else {
             rowidResult = totalCount + 1;   // past the end
         }
