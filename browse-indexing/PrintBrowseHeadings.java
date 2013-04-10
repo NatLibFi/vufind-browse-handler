@@ -70,11 +70,11 @@ public class PrintBrowseHeadings
                 out.print (heading);
 
                 if (++count % 500000 == 0) { 
-                    System.out.println(new Integer(count).toString() + " headings loaded");
+                    System.out.println(new Integer(count).toString() + " headings processed");
                 }
             }
         }
-        System.out.println(new Integer(count).toString() + " headings loaded");
+        System.out.println(new Integer(count).toString() + " headings processed");
     }
 
 
