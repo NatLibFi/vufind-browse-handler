@@ -27,8 +27,6 @@ import java.sql.*;
 
 import au.gov.nla.util.*;
 
-import com.sun.tools.javac.util.Pair;
-
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -135,7 +133,7 @@ class HeadingsDB
      * Handles only simple syntax like "(institution:MyInst) AND (building:Main OR building:Branch)" 
      * or "(institution:MyInst) AND building:(Main OR Branch)"
      */
-    private Pair<String, List<String>> filterQueryToSQL(Query query)
+    private AbstractMap.SimpleEntry<String, List<String>> filterQueryToSQL(Query query)
         throws SQLException
     {
         if (query == null) {
@@ -159,7 +157,7 @@ class HeadingsDB
             String sql = "";
             List<String> parameters = new LinkedList<String> ();
             for (BooleanClause c: bq.getClauses ()) {
-                Pair<String, List<String>> res = filterQueryToSQL (c.getQuery ());
+                AbstractMap.SimpleEntry<String, List<String>> res = filterQueryToSQL (c.getQuery ());
                 if (res == null) {
                     continue;
                 }
@@ -173,10 +171,10 @@ class HeadingsDB
                         sql += " OR ";
                     }
                 }
-                sql += "(" + res.fst + ")";
-                parameters.addAll (res.snd);
+                sql += "(" + res.getKey() + ")";
+                parameters.addAll (res.getValue());
             }
-            return new Pair<String, List<String>> (sql, parameters);
+            return new AbstractMap.SimpleEntry<String, List<String>> (sql, parameters);
         } else if (query instanceof TermQuery) {
             TermQuery tq = (TermQuery)query;
             Term term = tq.getTerm ();
@@ -190,7 +188,7 @@ class HeadingsDB
             String sql = "id in (select heading_id from filter_link where filter_value_id in (select id from filter_value where type_id=" + filterId + " and value=?))";
             List<String> parameters = new LinkedList<String> ();
             parameters.add(term.text ());
-            return new Pair<String, List<String>> (sql, parameters);
+            return new AbstractMap.SimpleEntry<String, List<String>> (sql, parameters);
         } else {
             Log.info("Unhandled Query class: " + query.getClass().getName ());
         }
@@ -263,9 +261,9 @@ class HeadingsDB
         String delimiter = ":";
         String sql_statement =  "select max(rowid) as id from headings where key < ?";
 
-        Pair<String, List<String>> filterList = filterQueryToSQL(filters);
+        AbstractMap.SimpleEntry<String, List<String>> filterList = filterQueryToSQL(filters);
         if (filterList != null) {
-            sql_statement += " and (" + filterList.fst + ")";
+            sql_statement += " and (" + filterList.getKey() + ")";
         } 
 
         PreparedStatement rowStmnt = db.prepareStatement (sql_statement);
@@ -274,7 +272,7 @@ class HeadingsDB
 
         if (filterList != null) {
             int pos = 1;
-            for (String value: filterList.snd) {
+            for (String value: filterList.getValue()) {
                 rowStmnt.setString(++pos, value);
             }
         } 
@@ -314,9 +312,9 @@ class HeadingsDB
         int lastRowid = rowid;
         result.startRow = rowid;
 
-        Pair<String, List<String>> filterList = filterQueryToSQL(filters);
+        AbstractMap.SimpleEntry<String, List<String>> filterList = filterQueryToSQL(filters);
         if (filterList != null) {
-            sql_statement += " and (" + filterList.fst + ")";
+            sql_statement += " and (" + filterList.getKey() + ")";
         } 
         
         sql_statement += " order by rowid limit " + Integer.toString(rows);
@@ -327,7 +325,7 @@ class HeadingsDB
 
         if (filterList != null) {
             int pos = 1;
-            for (String value: filterList.snd) {
+            for (String value: filterList.getValue()) {
                 rowStmnt.setString(++pos, value);
             }
         } 
@@ -386,9 +384,9 @@ class HeadingsDB
         int lastRowid = rowid;
         result.endRow = rowid;
 
-        Pair<String, List<String>> filterList = filterQueryToSQL(filters);
+        AbstractMap.SimpleEntry<String, List<String>> filterList = filterQueryToSQL(filters);
         if (filterList != null) {
-            sql_statement += " and (" + filterList.fst + ")";
+            sql_statement += " and (" + filterList.getKey() + ")";
         } 
         
         sql_statement += " order by rowid desc limit " + Integer.toString(rows);
@@ -398,7 +396,7 @@ class HeadingsDB
         rowStmnt.setInt (1, rowid);
         if (filterList != null) {
             int pos = 1;
-            for (String value: filterList.snd) {
+            for (String value: filterList.getValue()) {
                 rowStmnt.setString(++pos, value);
             }
         } 
