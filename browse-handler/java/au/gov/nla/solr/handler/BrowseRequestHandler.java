@@ -170,9 +170,16 @@ class HeadingsDB
                     } else {
                         sql += " OR ";
                     }
+                } else {
+                    if (c.isProhibited()) {
+                        sql += " NOT ";
+                    }
                 }
                 sql += "(" + res.getKey() + ")";
                 parameters.addAll (res.getValue());
+            }
+            if (sql.isEmpty()) {
+                return null;
             }
             return new AbstractMap.SimpleEntry<String, List<String>> (sql, parameters);
         } else if (query instanceof TermQuery) {
@@ -189,6 +196,8 @@ class HeadingsDB
             List<String> parameters = new LinkedList<String> ();
             parameters.add(term.text ());
             return new AbstractMap.SimpleEntry<String, List<String>> (sql, parameters);
+        } else if (query instanceof MatchAllDocsQuery) {
+            return new AbstractMap.SimpleEntry<String, List<String>>("1=1", new LinkedList<String>());
         } else {
             Log.info("Unhandled Query class: " + query.getClass().getName ());
         }
@@ -672,8 +681,6 @@ class BibDB
     {
         TermQuery q = new TermQuery (new Term (field, heading));
 
-        Log.info ("Searching '" + field + "' for '" + "'" + heading + "'");
-        
         TotalHitCountCollector counter = new TotalHitCountCollector();
         db.search (q, counter);
 
@@ -692,16 +699,10 @@ class BibDB
     {
         Filter queryFilter = null;
         if (filters != null) {
-          //  BooleanQuery bq = new BooleanQuery();
-            //bq.add(filters, BooleanClause.Occur.MUST);
-            //bq.add(new TermQuery (new Term (field, heading)), BooleanClause.Occur.MUST);
-            //q = bq;
             queryFilter = new QueryWrapperFilter(filters);
         } 
         Query q = new TermQuery (new Term (field, heading));
 
-        Log.info (System.currentTimeMillis () + " Searching '" + field + "' for '" + heading + "'");
-        
         final Map<String, List<String>> bibinfo = new HashMap<String,List<String>> ();
         bibinfo.put ("ids", new ArrayList<String> ());
         final String[] bibExtras = extras.split(":");
@@ -1052,6 +1053,8 @@ public class BrowseRequestHandler extends RequestHandlerBase
 
         Query filterQuery = null;
         if (filters != null && !filters.isEmpty()) {
+            // Prepend with a *:* query so that any negative filter queries work
+            filters = "*:* " + filters;
             QParser analyzer = new LuceneQParserPlugin().createParser(filters, p, p, req); 
             QueryParser queryParser = new QueryParser(Version.LUCENE_42, "allfields", analyzer);
             filterQuery = queryParser.parse(filters);
