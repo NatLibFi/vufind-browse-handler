@@ -7,57 +7,40 @@ import java.util.*;
 
 import java.sql.*;
 
-// Note that this version is coming from Solr!
 import org.apache.commons.codec.binary.Base64;
+// Note that this version is coming from Solr!
+//import org.apache.commons.codec.binary.Base64;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.search.ConstantScoreQuery;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.TermQuery;
+import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.TotalHitCountCollector;
+import org.apache.lucene.store.FSDirectory;
+
+import au.gov.nla.util.BrowseEntry;
 
 
 public class CreateBrowseSQLite
 {
     private Connection outputDB;
 
-    private String KEY_SEPARATOR = "\1";
-    private String FILTER_SEPARATOR = "\2";
+    private Leech bibLeech;
+    private Leech authLeech;
+    private Leech nonprefAuthLeech;
 
+    IndexSearcher bibSearcher;
+    IndexSearcher authSearcher;
 
-    /*
-     * Like BufferedReader#readLine(), but only returns lines ended by a \r\n.
-     */
-    private String readCRLFLine (BufferedReader br) throws IOException
-    {
-        StringBuilder sb = new StringBuilder();
+    private String luceneField;
 
-        while (true) {
-            int ch = br.read ();
-
-            if (ch >= 0) {
-                if (ch == '\r') {
-                    // This might either be a carriage return embedded in record
-                    // data (which we want to preserve) or the first part of the
-                    // \r\n end of line marker.
-
-                    ch = br.read ();
-
-                    if (ch == '\n') {
-                        // An end of line.  We're done.
-                        return sb.toString();
-                    }
-
-                    // Must have been an embedded carriage return.  Keep it.
-                    sb.append('\r');
-                }
-
-                sb.append((char) ch);
-            } else {
-                // EOF.  Show's over.
-                return null;
-            }
-        }
-    }
-
-
-    private void loadHeadings (BufferedReader br)
+    private void loadHeadings (Leech leech, Predicate predicate)
         throws Exception
     {
+        BrowseEntry h;
         int count = 0;
         int id = 0;
 
@@ -65,19 +48,29 @@ public class CreateBrowseSQLite
         
         outputDB.setAutoCommit (false);
 
+        PreparedStatement prepGetHeading = outputDB.prepareStatement (
+             "select id from all_headings where key = ?");
+
         PreparedStatement prepAddHeading = outputDB.prepareStatement (
             "insert or ignore into all_headings (id, key, heading) values (?, ?, ?)");
 
         PreparedStatement prepGetFilterValue = outputDB.prepareStatement (
-                "select id from filter_value where type_id=? and value=?");
+            "select id from filter_value where type_id=? and value=?");
         
         PreparedStatement prepAddFilterValue = outputDB.prepareStatement (
-                "insert into filter_value (id, type_id, value) values (?, ?, ?)");
+            "insert into filter_value (id, type_id, value) values (?, ?, ?)");
 
         PreparedStatement prepAddFilterLink = outputDB.prepareStatement (
-                "insert or ignore into filter_link (heading_id, filter_value_id) values (?, ?)");
+            "insert or ignore into filter_link (heading_id, filter_value_id) values (?, ?)");
 
         HashMap<String, Integer> filterTypeMap = new HashMap<String, Integer>();
+        HashMap<String, Integer> headingIdCache = new LinkedHashMap<String, Integer>(50000, .75F, true) {
+            protected static final long serialVersionUID = 1L;
+            @Override
+            protected boolean removeEldestEntry(Map.Entry eldest) {
+                return size() >= 50000;
+            }
+        };
         HashMap<String, Integer> filterValueCache = new LinkedHashMap<String, Integer>(10000, .75F, true) {
             protected static final long serialVersionUID = 1L;
             @Override
@@ -85,35 +78,43 @@ public class CreateBrowseSQLite
                 return size() >= 10000;
             }
         };
-        String line;
-        String prevHeading = null;
         int maxValueId = 0;
         int linkCount = 0;
-        while ((line = readCRLFLine (br)) != null) {
-            String[] elements = line.split(KEY_SEPARATOR);
+        
+        while ((h = leech.next ()) != null) {
+            if (predicate != null &&
+                !predicate.isSatisfiedBy (h.value)) {
+                continue;
+            }
 
-            if (elements.length > 1) {
-
-                byte[] key = Base64.decodeBase64 (elements[0].getBytes());
-                String heading = elements[1];
-
-                if (prevHeading == null || !prevHeading.equals (heading)) {
-                    ++id;
-                    prepAddHeading.setInt (1,  id); 
-                    prepAddHeading.setBytes (2, key);
-                    prepAddHeading.setString (3, heading);
-                    prepAddHeading.addBatch ();
+            if (h.key != null) {
+                String headingKeyStr = new String (Base64.encodeBase64 (h.key));
+                int headingId;
+                if (headingIdCache.containsKey (headingKeyStr)) {
+                    headingId = headingIdCache.get(headingKeyStr);
+                } else {                
+                    prepGetHeading.setBytes (1, h.key); 
+                    ResultSet rs = prepGetHeading.executeQuery ();
+                    if (rs.next ()) {
+                        headingId = rs.getInt ("id");
+                    } else {
+                        ++id;
+                        prepAddHeading.setInt (1,  id); 
+                        prepAddHeading.setBytes (2, h.key);
+                        prepAddHeading.setString (3, h.value);
+                        prepAddHeading.execute();
+                        headingId = id;
+                    }
+                    rs.close();
+                    headingIdCache.put (headingKeyStr, headingId);
                 }
-                prevHeading = heading;
-                
+                 
                 // Add filters and store filter types so that we can build 
                 // filter_type table in the end
-                if (elements.length > 2) {
-                    for (String filter: elements[2].split (FILTER_SEPARATOR)) {
-                        int filterSep = filter.indexOf (':');
-                        if (filterSep > 0) {
-                            String filterType = filter.substring (0, filterSep);
-                            String filterValue = filter.substring (filterSep + 1);
+                if (h.filters != null) {
+                    for (String filterType: h.filters.keySet ()) {
+                        String[] values = h.filters.get (filterType);
+                        for (String filterValue: values) {
                             if (!filterTypeMap.containsKey (filterType)) {
                                 filterTypeMap.put (filterType, filterTypeMap.size () + 1);
                             }
@@ -121,14 +122,14 @@ public class CreateBrowseSQLite
                               
                             int currentValueId = 0;
 
-                            if (filterValueCache.containsKey(filter)) {
-                                currentValueId = filterValueCache.get(filter);
+                            if (filterValueCache.containsKey(filterType + ":" + filterValue)) {
+                                currentValueId = filterValueCache.get(filterType + ":" + filterValue);
                             } else {
                                 prepGetFilterValue.setInt(1, typeId);
                                 prepGetFilterValue.setString(2, filterValue);
                                 ResultSet filterValueRs = prepGetFilterValue.executeQuery ();
-                                if (filterValueRs.next()) {
-                                    currentValueId = filterValueRs.getInt("id");
+                                if (filterValueRs.next ()) {
+                                    currentValueId = filterValueRs.getInt ("id");
                                 } else {
                                     prepAddFilterValue.setInt (1, ++maxValueId);
                                     prepAddFilterValue.setInt (2, typeId);
@@ -137,18 +138,16 @@ public class CreateBrowseSQLite
                                     
                                     currentValueId = maxValueId;
                                 }
-                                filterValueCache.put(filter, currentValueId);
+                                filterValueCache.put (filterType + ":" + filterValue, currentValueId);
                             }
-                            prepAddFilterLink.setInt(1, id);
-                            prepAddFilterLink.setInt(2, currentValueId);
+                            prepAddFilterLink.setInt (1, id);
+                            prepAddFilterLink.setInt (2, currentValueId);
                             prepAddFilterLink.addBatch ();
 
                             if ((++linkCount % 500000) == 0) {
                                 prepAddFilterLink.executeBatch ();
                                 prepAddFilterLink.clearBatch ();
                             }
-                        } else {
-                              System.err.println ("Invalid filter string: '" + filter + "'");
                         }
                     }
                 }
@@ -156,15 +155,12 @@ public class CreateBrowseSQLite
 
             count++;
 
-            if ((count % 500000) == 0) {
-                prepAddHeading.executeBatch ();
-                prepAddHeading.clearBatch ();
+            if ((count % 100000) == 0) {
+                outputDB.commit ();
                 System.out.println(new Integer(count) + " headings loaded");
             }
         }
 
-        prepAddHeading.executeBatch ();
-        prepAddHeading.close ();
         prepAddFilterLink.executeBatch ();
         prepAddFilterLink.close ();
         
@@ -187,6 +183,63 @@ public class CreateBrowseSQLite
         outputDB.setAutoCommit (true);
     }
 
+    private String getEnvironment (String var)
+    {
+        return (System.getenv (var) != null) ?
+            System.getenv (var) : System.getProperty (var.toLowerCase ());
+    }
+    
+    private int bibCount (String heading) throws IOException
+    {
+        TotalHitCountCollector counter = new TotalHitCountCollector();
+
+        bibSearcher.search (new ConstantScoreQuery(new TermQuery (new Term (luceneField, heading))),
+                            counter);
+
+        return counter.getTotalHits ();
+    }
+    
+    private boolean isLinkedFromBibData (String heading)
+            throws IOException
+    {
+        TopDocs hits = null;
+
+        int max_headings = 20;
+        while (true) {
+            hits = authSearcher.search
+                (new ConstantScoreQuery
+                 (new TermQuery
+                  (new Term
+                   (System.getProperty ("field.insteadof", "insteadOf"),
+                    heading))),
+                 max_headings);
+
+            if (hits.scoreDocs.length < max_headings) {
+                // That's all of them.  All done.
+                break;
+            } else {
+                // Hm.  That's a lot of headings.  Go back for more.
+                max_headings *= 2;
+            }
+        }
+
+        for (int i = 0; i < hits.scoreDocs.length; i++) {
+            Document doc = authSearcher.getIndexReader ().document (hits.scoreDocs[i].doc);
+
+            String[] preferred = doc.getValues (System.getProperty ("field.preferred", "preferred"));
+            if (preferred.length > 0) {
+                String preferredHeading = preferred[0];
+
+                if (bibCount (preferredHeading) > 0) {
+                    return true;
+                }
+            } else {
+                return false;
+            }
+        }
+
+        return false;
+    }
 
     private void setupDatabase ()
         throws Exception
@@ -201,8 +254,10 @@ public class CreateBrowseSQLite
         stat.executeUpdate ("create table filter_type (id, type);");
         stat.executeUpdate ("create table filter_value (id, type_id, value);");
         stat.executeUpdate ("create table filter_link (heading_id, filter_value_id, primary key (heading_id, filter_value_id));");
-        stat.executeUpdate ("PRAGMA synchronous = OFF;");
+        stat.executeUpdate ("create index allkeyindex on all_headings (key);");
+        stat.execute ("PRAGMA synchronous = OFF;");
         stat.execute ("PRAGMA journal_mode = OFF;");
+        stat.execute ("PRAGMA locking_mode = EXCLUSIVE;");
 
         stat.close ();
     }
@@ -264,7 +319,24 @@ public class CreateBrowseSQLite
         stat.close ();
     }
 
-    public void create (String headingsFile, String outputPath)
+    private Leech getBibLeech (String bibPath, String luceneField)
+            throws Exception
+    {
+        String leechClass = "Leech";
+
+        if (getEnvironment ("BIBLEECH") != null) {
+            leechClass = getEnvironment ("BIBLEECH");
+        }
+
+        return (Leech) (Class.forName (leechClass)
+                        .getConstructor (String.class, String.class)
+                        .newInstance (bibPath, luceneField ));
+    }
+    
+    public void create (String bibPath,
+                        String luceneField,
+                        String authPath, 
+                        String outputPath)
         throws Exception
     {
         Class.forName ("org.sqlite.JDBC");
@@ -272,14 +344,39 @@ public class CreateBrowseSQLite
 
         setupDatabase ();
 
-        BufferedReader br = new BufferedReader
-            (new FileReader (headingsFile));
+        this.luceneField = luceneField;
+        bibLeech = getBibLeech (bibPath, luceneField);
 
-        loadHeadings (br);
+        IndexReader bibReader = DirectoryReader.open (FSDirectory.open (new File (bibPath)));
+        bibSearcher = new IndexSearcher (bibReader);
 
-        br.close ();
+        if (authPath != null) {
+            nonprefAuthLeech = new Leech (authPath,
+                                          System.getProperty ("field.insteadof",
+                                                              "insteadOf"));
 
-        createKeyIndex ();
+            IndexReader authReader = DirectoryReader.open (FSDirectory.open (new File (authPath)));
+            authSearcher = new IndexSearcher (authReader);
+
+            loadHeadings (nonprefAuthLeech,
+                          new Predicate () {
+                              public boolean isSatisfiedBy (Object obj)
+                              {
+                                  String heading = (String) obj;
+
+                                  try {
+                                      return isLinkedFromBibData (heading);
+                                  } catch (IOException e) {
+                                      return true;
+                                  }
+                              }}
+                );
+
+            nonprefAuthLeech.dropOff ();
+        }
+        
+        loadHeadings (bibLeech, null);
+
         buildOrderedTables ();
         dropAllHeadingsTable ();
         compactDatabase ();
@@ -290,14 +387,23 @@ public class CreateBrowseSQLite
     public static void main (String args[])
         throws Exception
     {
-        if (args.length != 2) {
+        if (args.length != 3 && args.length != 4) {
             System.err.println
-                ("Usage: CreateBrowseSQLite <headings file> <db file>");
+                ("Usage: CreateBrowseSQLite <bib index> <bib field> "
+                 + "<auth index> <db file>");
+            System.err.println ("\nor:\n");
+            System.err.println
+                ("Usage: CreateBrowseSQLite <bib index> <bib field>"
+                 + " <db file>");
             System.exit (0);
         }
 
         CreateBrowseSQLite self = new CreateBrowseSQLite ();
 
-        self.create (args[0], args[1]);
+        if (args.length == 4) {
+            self.create (args[0], args[1], args[2], args[3]);
+        } else {
+            self.create (args[0], args[1], null, args[2]);
+        }
     }
 }

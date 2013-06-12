@@ -1056,7 +1056,7 @@ public class BrowseRequestHandler extends RequestHandlerBase
             // Prepend with a *:* query so that any negative filter queries work
             filters = "*:* " + filters;
             QParser analyzer = new LuceneQParserPlugin().createParser(filters, p, p, req); 
-            QueryParser queryParser = new QueryParser(Version.LUCENE_42, "allfields", analyzer);
+            QueryParser queryParser = new QueryParser(Version.LUCENE_43, "allfields", analyzer);
             filterQuery = queryParser.parse(filters);
         }
         
