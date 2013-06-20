@@ -52,7 +52,7 @@ public class CreateBrowseSQLite
              "select id from all_headings where key = ?");
 
         PreparedStatement prepAddHeading = outputDB.prepareStatement (
-            "insert or ignore into all_headings (id, key, heading) values (?, ?, ?)");
+            "insert into all_headings (id, key, heading) values (?, ?, ?)");
 
         PreparedStatement prepGetFilterValue = outputDB.prepareStatement (
             "select id from filter_value where type_id=? and value=?");
@@ -61,9 +61,10 @@ public class CreateBrowseSQLite
             "insert into filter_value (id, type_id, value) values (?, ?, ?)");
 
         PreparedStatement prepAddFilterLink = outputDB.prepareStatement (
-            "insert or ignore into filter_link (heading_id, filter_value_id) values (?, ?)");
+            "insert or ignore into tmp_filter_link (heading_id, filter_value_id) values (?, ?)");
 
         HashMap<String, Integer> filterTypeMap = new HashMap<String, Integer>();
+        HashMap<String, Integer> headingWriteCache = new HashMap<String, Integer>(50000);
         HashMap<String, Integer> headingIdCache = new LinkedHashMap<String, Integer>(50000, .75F, true) {
             protected static final long serialVersionUID = 1L;
             @Override
@@ -92,21 +93,31 @@ public class CreateBrowseSQLite
                 int headingId;
                 if (headingIdCache.containsKey (headingKeyStr)) {
                     headingId = headingIdCache.get(headingKeyStr);
+                } else if (headingWriteCache.containsKey (headingKeyStr)) {
+                    headingId = headingWriteCache.get (headingKeyStr);
                 } else {                
                     prepGetHeading.setBytes (1, h.key); 
                     ResultSet rs = prepGetHeading.executeQuery ();
                     if (rs.next ()) {
                         headingId = rs.getInt ("id");
+                        headingIdCache.put (headingKeyStr, headingId);
                     } else {
                         ++id;
-                        prepAddHeading.setInt (1,  id); 
+                        // Add to next update batch
+                        headingWriteCache.put(headingKeyStr, id);
+                        prepAddHeading.setInt (1, id); 
                         prepAddHeading.setBytes (2, h.key);
                         prepAddHeading.setString (3, h.value);
-                        prepAddHeading.execute();
+                        prepAddHeading.addBatch ();
+                        if (headingWriteCache.size() >= 50000) {
+                            // batch update the table
+                            prepAddHeading.executeBatch ();
+                            prepAddHeading.clearBatch ();
+                            headingWriteCache.clear ();
+                        }
                         headingId = id;
                     }
                     rs.close();
-                    headingIdCache.put (headingKeyStr, headingId);
                 }
                  
                 // Add filters and store filter types so that we can build 
@@ -138,8 +149,10 @@ public class CreateBrowseSQLite
                                     
                                     currentValueId = maxValueId;
                                 }
+                                filterValueRs.close();
                                 filterValueCache.put (filterType + ":" + filterValue, currentValueId);
                             }
+                            
                             prepAddFilterLink.setInt (1, id);
                             prepAddFilterLink.setInt (2, currentValueId);
                             prepAddFilterLink.addBatch ();
@@ -156,11 +169,16 @@ public class CreateBrowseSQLite
             count++;
 
             if ((count % 100000) == 0) {
-                outputDB.commit ();
-                System.out.println(new Integer(count) + " headings loaded");
+                System.out.println (new Integer(count) + " headings loaded");
             }
         }
 
+        if (!headingWriteCache.isEmpty ()) {
+            // batch update the table
+            prepAddHeading.executeBatch ();
+            prepAddHeading.clearBatch ();
+        }
+        
         prepAddFilterLink.executeBatch ();
         prepAddFilterLink.close ();
         
@@ -179,6 +197,14 @@ public class CreateBrowseSQLite
         
         prepAddFilterType.close ();
 
+        System.out.println("Building final headings table...");
+        Statement stat = outputDB.createStatement();
+        stat.executeUpdate ("create table main.headings " +
+                "as select * from all_headings order by key;");
+        
+        System.out.println("Building final filter link table...");
+        stat.executeUpdate("create table main.filter_link as select distinct * from tmp.tmp_filter_link;");
+        
         outputDB.commit ();
         outputDB.setAutoCommit (true);
     }
@@ -241,23 +267,36 @@ public class CreateBrowseSQLite
         return false;
     }
 
-    private void setupDatabase ()
+    private void setupDatabase (String outputPath)
         throws Exception
     {
+        Class.forName ("org.sqlite.JDBC");
+        outputDB = DriverManager.getConnection ("jdbc:sqlite:" + outputPath);
+
         Statement stat = outputDB.createStatement ();
 
+        stat.executeUpdate ("attach database ':memory:' as tmp;");
         stat.executeUpdate ("drop table if exists all_headings;");
+        stat.executeUpdate ("drop table if exists headings;");
         stat.executeUpdate ("drop table if exists filter_type;");
         stat.executeUpdate ("drop table if exists filter_value;");
+        stat.executeUpdate ("drop table if exists tmp_filter_link;");
         stat.executeUpdate ("drop table if exists filter_link;");
-        stat.executeUpdate ("create table all_headings (id, key, heading);");
+        stat.executeUpdate ("create table tmp.all_headings (id, key, heading);");
         stat.executeUpdate ("create table filter_type (id, type);");
         stat.executeUpdate ("create table filter_value (id, type_id, value);");
-        stat.executeUpdate ("create table filter_link (heading_id, filter_value_id, primary key (heading_id, filter_value_id));");
-        stat.executeUpdate ("create index allkeyindex on all_headings (key);");
+        stat.executeUpdate ("create table tmp.tmp_filter_link (heading_id, filter_value_id, primary key (heading_id, filter_value_id));");
+        //stat.executeUpdate ("create table filter_link (heading_id, filter_value_id, primary key (heading_id, filter_value_id));");
+        stat.executeUpdate ("create index tmp.allkeyindex on all_headings (key);");
         stat.execute ("PRAGMA synchronous = OFF;");
         stat.execute ("PRAGMA journal_mode = OFF;");
         stat.execute ("PRAGMA locking_mode = EXCLUSIVE;");
+        stat.execute ("PRAGMA cache_size = 200000;");
+        stat.execute ("PRAGMA auto_vacuum = none;");
+        stat.execute ("PRAGMA automatic_index = OFF;");
+        stat.execute ("PRAGMA read_uncommitted = ON;");
+        stat.execute ("PRAGMA temp_store = MEMORY;");
+        stat.execute ("PRAGMA mmap_size = 0;");
 
         stat.close ();
     }
@@ -288,13 +327,14 @@ public class CreateBrowseSQLite
         stat.close ();
     }
 
-    private void dropAllHeadingsTable ()
+    private void dropTemporaryTables ()
         throws Exception
     {
         System.out.println("Dropping temporary tables...");
         Statement stat = outputDB.createStatement ();
 
         stat.executeUpdate ("drop table if exists all_headings;");
+        stat.executeUpdate ("drop table if exists tmp_filter_link;");
         stat.close ();
     }
 
@@ -304,7 +344,7 @@ public class CreateBrowseSQLite
         Statement stat = outputDB.createStatement ();
         System.out.println("Creating filter indexes...");
 
-        stat.executeUpdate ("create index filter_link_covering2 on filter_link(filter_value_id, heading_id);");
+        stat.executeUpdate ("create index filter_link_covering on filter_link(filter_value_id, heading_id);");
         stat.executeUpdate ("create index filter_value_covering on filter_value(id, type_id, value);");
         stat.close ();
     }
@@ -339,10 +379,7 @@ public class CreateBrowseSQLite
                         String outputPath)
         throws Exception
     {
-        Class.forName ("org.sqlite.JDBC");
-        outputDB = DriverManager.getConnection ("jdbc:sqlite:" + outputPath);
-
-        setupDatabase ();
+        setupDatabase (outputPath);
 
         this.luceneField = luceneField;
         bibLeech = getBibLeech (bibPath, luceneField);
@@ -377,8 +414,7 @@ public class CreateBrowseSQLite
         
         loadHeadings (bibLeech, null);
 
-        buildOrderedTables ();
-        dropAllHeadingsTable ();
+        dropTemporaryTables ();
         compactDatabase ();
         createFilterIndexes ();
     }

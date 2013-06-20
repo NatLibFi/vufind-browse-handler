@@ -73,6 +73,7 @@ public class Leech
             String termText = tenum.term().utf8ToString();
 
             if (termExists(termText)) {
+                termText = Utils.trimTerm(termText);
                 return new BrowseEntry (buildSortKey (termText), termText, null);
             } else {
                 return this.next();

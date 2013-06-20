@@ -12,12 +12,13 @@ import au.gov.nla.util.BrowseEntry;
 
 public class StoredFieldLeech extends Leech
 {
+    String indexPath;
     int currentDoc = 0;
     LinkedList<BrowseEntry> buffer;
 
     String[] sortFields;
     String[] valueFields;
-    String[] filterFields;
+    String[] filterFields = {};
 
     private Set<String> fieldSelection;
 
@@ -26,9 +27,12 @@ public class StoredFieldLeech extends Leech
     {
         super (indexPath, field);
 
+        this.indexPath = indexPath;
         sortFields = Utils.getEnvironment ("SORTFIELD").split(":");
         valueFields = Utils.getEnvironment ("VALUEFIELD").split(":");
-        filterFields = Utils.getEnvironment ("FILTERFIELD").split(":");
+        if (Utils.getEnvironment ("FILTERFIELD") != null) {
+            filterFields = Utils.getEnvironment ("FILTERFIELD").split(":");
+        }
 
         if (sortFields.length == 0 || valueFields.length == 0) {
             throw new IllegalArgumentException ("Both SORTFIELD and " +
@@ -47,14 +51,19 @@ public class StoredFieldLeech extends Leech
             fieldSelection.add (fld);
         }
 
-        reader = DirectoryReader.open (FSDirectory.open (new File (indexPath)));
+        reader = DirectoryReader.open (FSDirectory.open (new File (indexPath)), -1);
         buffer = new LinkedList<BrowseEntry> ();
     }
 
 
-    private void loadDocument (IndexReader reader, int docid)
+    private void loadDocument (int docid)
         throws Exception
     {
+        if (currentDoc % 1000000 == 1) {
+            reader.close();
+            reader = DirectoryReader.open (FSDirectory.open (new File (indexPath)), -1);
+        }
+        
         Document doc = reader.document (currentDoc, fieldSelection);
 
         List<String> sort_keys = new LinkedList<String> ();
@@ -76,7 +85,9 @@ public class StoredFieldLeech extends Leech
 
         if (sort_keys.size() == values.size()) {
             for (int i = 0; i < values.size(); i++) {
-                buffer.add (new BrowseEntry(buildSortKey(sort_keys.get(i)), values.get(i), filterMap));
+                String sort = Utils.trimTerm(sort_keys.get(i));
+                String value = Utils.trimTerm(values.get(i));
+                buffer.add (new BrowseEntry(buildSortKey(sort), value, filterMap));
             }
         } else {
             System.err.println("Skipped entries for docid " + docid +
@@ -90,7 +101,7 @@ public class StoredFieldLeech extends Leech
     {
         while (buffer.isEmpty ()) {
             if (currentDoc < reader.maxDoc ()) {
-                loadDocument (reader, currentDoc);
+                loadDocument (currentDoc);
                 currentDoc++;
             } else {
                 return null;
