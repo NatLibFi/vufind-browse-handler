@@ -41,10 +41,10 @@ class IndexAuth
         MarcReader reader = new MarcStreamReader (in);
 
         StandardAnalyzer analyzer = (new StandardAnalyzer
-                                     (org.apache.lucene.util.Version.LUCENE_43));
+                                     (org.apache.lucene.util.Version.LUCENE_44));
 
         IndexWriter iw = new IndexWriter (FSDirectory.open (new File (indexDir)),
-                                          new IndexWriterConfig(org.apache.lucene.util.Version.LUCENE_43,
+                                          new IndexWriterConfig(org.apache.lucene.util.Version.LUCENE_44,
                                                                 analyzer));
 
         while (reader.hasNext ()) {
