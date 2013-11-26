@@ -60,8 +60,8 @@ public class Leech
     //
     public BrowseEntry next () throws Exception
     {
-        if (tenum == null) {
-            AtomicReader ir = new SlowCompositeReaderWrapper(reader);
+        if (tenum == null) { 
+            AtomicReader ir = SlowCompositeReaderWrapper.wrap(reader);
             Terms terms = ir.terms(this.field);
             if (terms == null) {
                   return null;

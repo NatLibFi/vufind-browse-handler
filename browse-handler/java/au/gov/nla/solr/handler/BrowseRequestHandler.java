@@ -20,6 +20,8 @@ import org.apache.solr.search.LuceneQParserPlugin;
 import org.apache.solr.search.QParser;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
+import org.apache.solr.core.SolrCore;
+
 import java.io.*;
 import java.util.*;
 import java.net.URL;
@@ -937,7 +939,6 @@ class BrowseSource
 public class BrowseRequestHandler extends RequestHandlerBase
 {
     private String authPath = null;
-    private String bibPath = null;
 
     private Map<String,BrowseSource> sources = new HashMap<String,BrowseSource> ();
 
@@ -949,7 +950,11 @@ public class BrowseRequestHandler extends RequestHandlerBase
         File f = new File (s);
 
         if (!f.isAbsolute ()) {
-            return (new File (new File (System.getenv ("BROWSE_HOME")),
+            String home = System.getenv ("BROWSE_HOME");
+            if (home == null) {
+                return f.getAbsolutePath();
+            }
+            return (new File (new File (home),
                              f.getPath ()).getPath ());
         } else {
             return f.getPath ();
@@ -964,7 +969,7 @@ public class BrowseRequestHandler extends RequestHandlerBase
         solrParams = SolrParams.toSolrParams (args);
 
         authPath = asAbsFile (solrParams.get ("authIndexPath"));
-        bibPath = asAbsFile (solrParams.get ("bibIndexPath"));
+        Log.info("browseRequestHandler: authority index path: " + authPath);
 
         sources = new HashMap<String, BrowseSource> ();
 
@@ -1056,7 +1061,7 @@ public class BrowseRequestHandler extends RequestHandlerBase
             // Prepend with a *:* query so that any negative filter queries work
             filters = "*:* " + filters;
             QParser analyzer = new LuceneQParserPlugin().createParser(filters, p, p, req); 
-            QueryParser queryParser = new QueryParser(Version.LUCENE_44, "allfields", analyzer);
+            QueryParser queryParser = new QueryParser(Version.LUCENE_45, "allfields", analyzer);
             filterQuery = queryParser.parse(filters);
         }
         
