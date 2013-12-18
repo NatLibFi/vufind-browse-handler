@@ -18,6 +18,7 @@ import org.apache.solr.parser.QueryParser;
 import org.apache.solr.request.*;
 import org.apache.solr.search.LuceneQParserPlugin;
 import org.apache.solr.search.QParser;
+import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.SolrCore;
@@ -836,7 +837,8 @@ class Browse
     public synchronized void reopenDatabasesIfUpdated () throws Exception
     {
         headingsDB.reopenIfUpdated ();
-        authDB.reopenIfUpdated ();
+        if (authDB != null) 
+            authDB.reopenIfUpdated ();
     }
 
 
@@ -856,23 +858,24 @@ class Browse
         // Need to go through the map and add
         item.extras = bibinfo;
 
-
-        Map<String, List<String>> fields = authDB.getFields (item.heading);
-
-        for (String value : fields.get ("seeAlso")) {
-            if (bibDB.recordCount (value) > 0) {
-                item.seeAlso.add (value);
+        if (authDB != null) {
+            Map<String, List<String>> fields = authDB.getFields (item.heading);
+    
+            for (String value : fields.get ("seeAlso")) {
+                if (bibDB.recordCount (value) > 0) {
+                    item.seeAlso.add (value);
+                }
             }
-        }
-
-        for (String value : fields.get ("useInstead")) {
-            if (bibDB.recordCount (value) > 0) {
-                item.useInstead.add (value);
+    
+            for (String value : fields.get ("useInstead")) {
+                if (bibDB.recordCount (value) > 0) {
+                    item.useInstead.add (value);
+                }
             }
-        }
-
-        for (String value : fields.get ("note")) {
-            item.note = value;
+    
+            for (String value : fields.get ("note")) {
+                item.note = value;
+            }
         }
     }
 
@@ -951,6 +954,9 @@ public class BrowseRequestHandler extends RequestHandlerBase
 
         if (!f.isAbsolute ()) {
             String home = System.getenv ("BROWSE_HOME");
+            if (home == null) {
+                home = System.getProperty ("solr.solr.home");
+            }
             if (home == null) {
                 return f.getAbsolutePath();
             }
@@ -1067,14 +1073,22 @@ public class BrowseRequestHandler extends RequestHandlerBase
         
         synchronized (this) {
             if (source.browse == null) {
+                AuthDB authDB = null;
+                Log.info("browseRequestHandler: creating auth DB");
+                if (new File(authPath).exists()) {
+                    authDB = new AuthDB
+                        (authPath,
+                         solrParams.get ("preferredHeadingField"),
+                         solrParams.get ("useInsteadHeadingField"),
+                         solrParams.get ("seeAlsoHeadingField"),
+                         solrParams.get ("scopeNoteField"));                    
+                } else {
+                    Log.info("browseRequestHandler: Auth DB not available, path " + authPath + " not found"); 
+                }
+                Log.info("browseRequestHandler: creating browse");
                 source.browse = (new Browse
                                  (new HeadingsDB (source.DBpath),
-                                  new AuthDB
-                                  (authPath,
-                                   solrParams.get ("preferredHeadingField"),
-                                   solrParams.get ("useInsteadHeadingField"),
-                                   solrParams.get ("seeAlsoHeadingField"),
-                                   solrParams.get ("scopeNoteField"))));
+                                 authDB));
             }
 
             source.browse.setBibDB (new BibDB (req.getSearcher (),
